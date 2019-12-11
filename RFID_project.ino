@@ -1,149 +1,109 @@
-#include <MFRC522.h> // dla RFID
-#include <SPI.h> // dla modułu RFID i karty SD
-#include <SD.h> // dla karty SD
-#include "RTCLib.h" // dla RTC (autor Adafruit)
+#include <MFRC522.h> // for the RFID
+#include <SPI.h> // for the RFID and SD card module
+#include <SD.h> // for the SD card
 
-// RFID
+// define pins for RFID
 #define CS_RFID 10
 #define RST_RFID 9
-
-// karta SD
+// define select pin for SD card module
 #define CS_SD 4 
 
-// Plik do przechowywania danych z czytnika RFID
-File file;
+// Create a file to store the data
+File myFile;
 
-// obiekt klasy MFRC522 (nasz czytnik)
+// Instance of the class for RFID
 MFRC522 rfid(CS_RFID, RST_RFID); 
 
-// deklaracja numerów UID
-String userUid="";
-String masterUid="";
+// Variable to hold the tag's UID
+String uidString;
 
-// obiekt klasy RTC_DS1307
-RTC_DS1307 rtc;
 
-// deklaracja diod LED
+// Define check in time
+const int checkInHour = 9;
+const int checkInMinute = 5;
+
+//Variable to hold user check in
+int userCheckInHour;
+int userCheckInMinute;
+
+// Pins for LEDs and buzzer
 const int redLED = 6;
-const int greenLED = 7;
-//SPRAWDZIĆ!!
 
 void setup() {
-  // LED
-  pinMode(redLED, OUTPUT);  
-  pinMode(greenLED, OUTPUT);
-
-  // SPI bus
-  SPI.begin(); 
   
-  // MFRC522 
+  // Set LEDs and buzzer as outputs
+  pinMode(redLED, OUTPUT);  
+  
+  // Init Serial port
+  Serial.begin(9600);
+  while(!Serial); // for Leonardo/Micro/Zero
+  
+  // Init SPI bus
+  SPI.begin(); 
+  // Init MFRC522 
   rfid.PCD_Init(); 
 
-  // karta SD
-  Serial.print("Inicjalizacja karty SD...");
+  // Setup for the SD card
+  Serial.print("Initializing SD card...");
+
+  delay(3000);
+
   if(!SD.begin(CS_SD)) {
-    Serial.println("Błąd inicjalizacji.");
+    Serial.println("initialization failed!");
+
     return;
   }
- Serial.println("Inicjalizacja zakończona.");
-
-  //RTC
-  if(!rtc.begin()) {
-    Serial.println("Nie znaleziono RTC");
-    while(1);
-  }
-  else {
-    // data i czas kompilacji
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
-  if(!rtc.isrunning()) {
-    Serial.println("RTC nie jest włączone."); //sprawdzić pisownię
-  }
+  Serial.println("initialization done.");
 }
 
 void loop() {
-  //zczytywanie nowej karty
+  //look for new cards
+  digitalWrite(CS_RFID,LOW);
   if(rfid.PICC_IsNewCardPresent()) {
     readRFID();
-    writeSDCard();
-    verifyUID();
+    logCard();
   }
-  delay(100);
+  delay(10);
 }
 
 void readRFID() {
-  //wczytanie nr UID użytkownika
   rfid.PICC_ReadCardSerial();
-  Serial.print("Numer UID: ");
-  for(int i=0; i<4; i++) {
-    userUid+=String(rfid.uid.uidByte[i]);
-  }
-  Serial.println(userUid);
+
+  Serial.print("Tag UID: ");
+
+  uidString = String(rfid.uid.uidByte[0]) + " " + String(rfid.uid.uidByte[1]) + " " + 
+    String(rfid.uid.uidByte[2]) + " " + String(rfid.uid.uidByte[3]);
+  Serial.println(uidString);
+
+  delay(2000);
+  digitalWrite(CS_RFID,HIGH);
 }
 
-void writeSDCard () {
-  digitalWrite(CS_SD, LOW);
+void logCard() {
+  // Enables SD card chip select pin
+  digitalWrite(CS_SD,LOW);
   
-  file=SD.open("LOGS.txt", FILE_WRITE);
+  // Open file
+  myFile=SD.open("DATA.txt", FILE_WRITE);
 
-  if(file) {
-    Serial.println("Otworzono plik");
-    file.print(userUid);
-    file.print('\t');
+  // If the file opened ok, write to it
+  if (myFile) {
+    Serial.println("File opened ok");
 
-    // Zapisywanie czasu do pliku
-    DateTime current = rtc.now();
-    //file.print(rtc.getTimeStr());// - zadziała?
-    file.print(current.day(), DEC);
-    file.print('.');
-    file.print(current.month(), DEC);
-    file.print('.');
-    file.print(current.hour(), DEC);
-    file.print(':');
-    file.print(current.minute(), DEC);
-    file.print(':');
-    file.print(current.second(), DEC);
+    delay(2000);
+    myFile.print(uidString);
+    myFile.print(", ");   
+    
+    delay(2000);
+    
+    myFile.close();
 
-    //wypisanie czasu na ekran
-    Serial.print(current.year(), DEC);
-    Serial.print('/');
-    Serial.print(current.month(), DEC);
-    Serial.print('/');
-    Serial.print(current.day(), DEC);
-    Serial.print(' ');
-    Serial.print(current.hour(), DEC);
-    Serial.print(':');
-    Serial.print(current.minute(), DEC);
-    Serial.print(':');
-    Serial.print(current.second(), DEC);
-    file.close();
   }
   else {
-    Serial.println("Nie udało się otworzyć pliku");
+    
+    Serial.println("error opening data.txt");  
+
   }
+  // Disables SD card chip select pin  
   digitalWrite(CS_SD,HIGH);
-}
-
-void verifyUID() {
-  file=SD.open("LOGS.txt", FILE_WRITE);
-  Serial.print('\t');
-  file.print('\t');
-  if(userUid==masterUid) {//trzeba sprawdzić jaki mamy 
-    digitalWrite(greenLED, HIGH);
-    delay(2000);
-    digitalWrite(greenLED, LOW);
-    delay(2000);
-    Serial.println("Dostęp przyznany.");
-    file.println("Wejście autoryzowane.");
-  }
-  else {
-    digitalWrite(redLED, HIGH);
-    delay(2000);
-    digitalWrite(redLED, LOW);
-    delay(2000);
-    Serial.println("Dostęp odrzucony.");
-    file.println("Próba nieautoryzowanego wejścia.");
-  }
-  file.close();
-  //Jakieś inne teksty wypisać?
 }
